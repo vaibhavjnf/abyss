@@ -29,6 +29,9 @@ const BUILTIN: &[(&str, &str)] = &[
 ];
 
 fn parse(text: &str, source: &str, fallback: &str) -> Skill {
+    // Git on Windows checks out with CRLF; normalize before parsing frontmatter.
+    let normalized = text.replace("\r\n", "\n");
+    let text = normalized.as_str();
     let (fm, body) = if let Some(rest) = text.strip_prefix("---\n") {
         match rest.split_once("\n---\n") {
             Some((fm, body)) => (fm, body),
@@ -169,6 +172,16 @@ mod tests {
         assert_eq!(s.name, "test-skill");
         assert_eq!(s.description, "does a thing");
         assert_eq!(s.tags, vec!["a", "b"]);
+        assert!(s.body.starts_with("# Body"));
+    }
+
+    #[test]
+    fn crlf_frontmatter_parses() {
+        let text = "---\r\nname: crlf\r\ndescription: windows checkout\r\ntags: [x]\r\n---\r\n# Body\r\nline\r\n";
+        let s = parse(text, "builtin", "fallback");
+        assert_eq!(s.name, "crlf");
+        assert_eq!(s.description, "windows checkout");
+        assert_eq!(s.tags, vec!["x"]);
         assert!(s.body.starts_with("# Body"));
     }
 
