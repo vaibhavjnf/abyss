@@ -98,6 +98,14 @@ pub struct Args {
     /// Disable SSE streaming (use plain JSON responses)
     #[arg(long = "no-stream")]
     pub no_stream: bool,
+
+    /// Preload a skill playbook into the system prompt (repeatable)
+    #[arg(long = "skill", value_name = "NAME", action = clap::ArgAction::Append)]
+    pub skill: Vec<String>,
+
+    /// List the built-in and on-disk skills
+    #[arg(long = "list-skills")]
+    pub list_skills: bool,
 }
 
 pub async fn run() -> Result<i32> {
@@ -110,6 +118,15 @@ pub async fn run() -> Result<i32> {
             ui::ok(&format!("wrote starter config → {}", p.display()));
         } else {
             ui::info(&format!("config already exists → {}", p.display()));
+        }
+        return Ok(0);
+    }
+
+    if args.list_skills {
+        let all = crate::skills::all();
+        println!("{} skills (builtin + ~/.abyss/skills + ./.abyss/skills)", all.len());
+        for s in all {
+            println!("  {:<16} {:<8} {}", s.name, s.source, s.description);
         }
         return Ok(0);
     }
@@ -161,7 +178,8 @@ fn take_prompt(args: &Args) -> Result<Option<String>> {
 async fn print_mode(args: &Args, cfg: Resolved, client: Arc<Client>, prompt_text: String) -> Result<i32> {
     let cwd = std::env::current_dir()?;
     let cwd_s = cwd.to_string_lossy().to_string();
-    let system = prompt::system_prompt(&cwd, cfg.system_extra.as_deref());
+    let preloaded = crate::skills::preload(&args.skill)?;
+    let system = prompt::system_prompt(&cwd, cfg.system_extra.as_deref(), &preloaded);
     let quiet = args.json || args.quiet;
     let mut agent = Agent::new(
         client,
@@ -211,7 +229,8 @@ async fn print_mode(args: &Args, cfg: Resolved, client: Arc<Client>, prompt_text
 async fn repl(args: &Args, mut cfg: Resolved, client: Arc<Client>) -> Result<i32> {
     let cwd = std::env::current_dir()?;
     let cwd_s = cwd.to_string_lossy().to_string();
-    let system = prompt::system_prompt(&cwd, cfg.system_extra.as_deref());
+    let preloaded = crate::skills::preload(&args.skill)?;
+    let system = prompt::system_prompt(&cwd, cfg.system_extra.as_deref(), &preloaded);
     let mut agent = Agent::new(
         client,
         system,
@@ -389,6 +408,26 @@ async fn slash(line: &str, agent: &mut Agent, cfg: &mut Resolved, session: &mut 
             }
         }
         "/system" => println!("{}", agent.system),
+        "/skills" => {
+            for sk in crate::skills::all() {
+                println!(
+                    "  {:<16} {:<8} {}",
+                    ui::cyan(&sk.name),
+                    ui::dim(&sk.source),
+                    ui::dim(&sk.description)
+                );
+            }
+        }
+        "/skill" => {
+            if rest.is_empty() {
+                ui::warn("usage: /skill <name>");
+            } else {
+                match crate::skills::get(rest) {
+                    Some(sk) => println!("{}", sk.body),
+                    None => ui::warn(&format!("unknown skill '{rest}' — try /skills")),
+                }
+            }
+        }
         _ => ui::warn(&format!("unknown command {cmd} — try /help")),
     }
     Ok(true)
@@ -410,6 +449,8 @@ fn print_help() {
         ("/new", "start a fresh session"),
         ("/init", "write starter config"),
         ("/system", "print system prompt"),
+        ("/skills", "list skill playbooks"),
+        ("/skill <name>", "print a skill playbook"),
         ("/!<cmd>", "run a shell command"),
         ("/exit", "leave"),
     ] {

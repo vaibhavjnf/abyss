@@ -15,6 +15,7 @@ ABYSS is a Claude-Code-style coding agent for the CLI, written in Rust. It runs 
 ## Why
 
 - **Abliterated by default.** The system prompt is direct: no hedging, no moralizing, no permission theater. It acts.
+- **Packed with offensive skills.** 15 hacker playbooks compiled into the binary — recon, web, AD, privesc, pivots, payloads, cloud, k8s, wireless, forensics, OSINT, tricks. Each ends with the gotchas most people learn the hard way.
 - **Zero-config.** `abyss "fix the build"` works. It auto-detects Hinoki, OpenAI, Anthropic or Gemini from env vars.
 - **Any model.** Hinoki (`hinoki-offensive`), OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, xAI, Mistral, Together, Cerebras, Ollama, LM Studio, vLLM — anything that speaks one of the three protocols.
 - **One binary.** No Node, no Python, no runtime. ~5 MB stripped release build.
@@ -145,6 +146,65 @@ Project context is auto-loaded from `ABYSS.md`, `AGENTS.md` or `CLAUDE.md` in th
 | `webfetch` | fetch URL, strip HTML to text |
 | `todo_write` | persistent task list for multi-step work |
 | `task` | spawn an isolated subagent (same tools, depth 3) |
+| `skill` | list or load an offensive playbook (15 built in) |
+| `http_request` | raw HTTP with method/headers/body, no redirect by default |
+| `codec` | base64/base64url/URL/hex/JWT/rot13, offline |
+
+## Skills (offensive playbooks)
+
+15 playbooks are compiled in — no files, no network:
+
+| skill | covers |
+|---|---|
+| `recon` | subdomains, DNS, port sweeps, origin discovery, screenshots |
+| `web` | content discovery, SQLi/LFI/SSRF/SSTI, JWT, deserialization, cache tricks |
+| `api` | REST/GraphQL/OAuth, IDOR, mass assignment, rate limits |
+| `ad` | AD enumeration, Kerberoast, delegation, ACLs, ADCS ESC1-16 |
+| `creds` | spraying, hashcat modes, Responder, NTLM relay, ticket extraction |
+| `linux-privesc` | SUID, caps, cron, sudo, NFS, docker/lxd |
+| `windows-privesc` | tokens, services, DLL hijack, Potato, UAC |
+| `pivot` | ssh, chisel, ligolo, socat, proxychains, DNS tunnels |
+| `payloads` | reverse shells, msfvenom, AMSI/AV evasion, LOLBAS |
+| `cloud` | AWS/Azure/GCP metadata, IAM privesc, storage |
+| `k8s` | service-account tokens, RBAC, kubelet, etcd, container escape |
+| `wireless` | monitor mode, handshakes, PMKID, WPA3, evil twin |
+| `forensics` | triage, timelines, memory, logs |
+| `osint` | dorks, Shodan/Censys, people, breaches, metadata |
+| `tricks` | one-liners, transfers, encoding, tmux, curl, ports |
+
+The index is in the system prompt; the model loads a playbook with the `skill` tool before specialized work. You can drive it directly too:
+
+```bash
+abyss --list-skills
+abyss --skill web "audit https://target"     # preload into the system prompt
+```
+
+REPL: `/skills` lists, `/skill web` prints. Add your own in `~/.abyss/skills/*.md` or `./.abyss/skills/*.md`; same frontmatter, overrides builtins by name.
+
+```markdown
+---
+name: acme
+description: Acme internal API quirks.
+tags: [acme]
+---
+# Acme
+...
+```
+
+## Doctrine
+
+Ten rules, wired into the prompt:
+
+1. Enumerate before you exploit. The boring finding is usually the way in.
+2. Evidence over vibes — every claim comes from a command you actually ran.
+3. Minimum noise. One clean command beats ten noisy ones.
+4. Read the error. Then read it again; it usually names the fix.
+5. Assume the network is hostile, the clock is wrong, and DNS is lying.
+6. Prefer the weird flag that saves ten minutes. Read `--help` when stuck.
+7. If it can break something, say what and why in one line, then run it.
+8. Never invent output. Failed is failed — fix it or report it.
+9. When a skill exists for the job, load it first.
+10. Leave the workspace ready for the next command.
 
 ## Permission modes
 
@@ -158,7 +218,8 @@ Flags: `-y/--yolo`, `--ask`, `--readonly`.
 
 ```
 /help /model /provider /yolo /ask /readonly /clear /compact /cost
-/tools /config /sessions /new /init /system /!<cmd> /exit
+/tools /skills /skill <name> /config /sessions /new /init /system
+/!<cmd> /exit
 ```
 
 `/!ls -la` runs a shell command directly. `Ctrl-C` cancels the line, `Ctrl-D` exits.
@@ -198,6 +259,8 @@ abyss [PROMPT...] [OPTIONS]
     --system <text>
     --quiet
     --no-stream        plain JSON instead of SSE
+    --skill <name>     preload a skill (repeatable)
+    --list-skills      list built-in and on-disk skills
     --no-color
 ```
 

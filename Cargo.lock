@@ -4,15 +4,17 @@ version = 3
 
 [[package]]
 name = "abyss"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "dirs",
  "futures-util",
  "globset",
  "ignore",
+ "libc",
  "regex",
  "reqwest",
  "rustyline",

@@ -220,6 +220,42 @@ pub fn specs() -> Vec<ToolSpec> {
                 "required": ["prompt"]
             }),
         ),
+        spec(
+            "skill",
+            "List or load a specialist playbook (recon, web, api, ad, creds, linux-privesc, windows-privesc, pivot, payloads, cloud, k8s, wireless, forensics, osint, tricks). Call with no name to list; with a name to load the full playbook.",
+            json!({
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "Skill name; omit to list all"}}
+            }),
+        ),
+        spec(
+            "http_request",
+            "Raw HTTP request with method, headers and body. Returns status, headers and body. Redirects are NOT followed by default — use it for auth flows, API testing and vhost routing.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "method": {"type": "string", "description": "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS (default GET)"},
+                    "headers": {"type": "object", "description": "Header name -> value"},
+                    "body": {"type": "string"},
+                    "follow_redirects": {"type": "boolean", "description": "Default false"},
+                    "timeout_secs": {"type": "integer", "description": "Default 30"}
+                },
+                "required": ["url"]
+            }),
+        ),
+        spec(
+            "codec",
+            "Encode/decode without leaving the shell: base64, base64url, URL, hex, JWT (decode header+payload), rot13.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["base64e", "base64d", "base64url_e", "base64url_d", "url_e", "url_d", "hex_e", "hex_d", "jwt", "rot13"]},
+                    "input": {"type": "string"}
+                },
+                "required": ["op", "input"]
+            }),
+        ),
     ]
 }
 
@@ -235,6 +271,9 @@ pub async fn execute(name: &str, args: &Value, env: &Env) -> (String, bool) {
         "webfetch" => webfetch(args).await,
         "todo_write" => todo_write(args, env),
         "task" => task(args, env).await,
+        "skill" => skill(args, env),
+        "http_request" => http_request(args).await,
+        "codec" => codec(args),
         other => (format!("unknown tool '{other}'"), true),
     }
 }
@@ -686,5 +725,263 @@ mod tests {
         for s in specs {
             assert_eq!(s.parameters["type"], "object");
         }
+    }
+}
+
+fn skill(args: &Value, _env: &Env) -> (String, bool) {
+    let name = s(args, "name");
+    if name.trim().is_empty() {
+        let all = crate::skills::all();
+        let mut out = format!("{} skills — load one with skill(name):\n", all.len());
+        for sk in all {
+            out.push_str(&format!(
+                "- {} [{}] — {}\n",
+                sk.name, sk.source, sk.description
+            ));
+        }
+        return (out, false);
+    }
+    match crate::skills::get(&name) {
+        Some(sk) => (
+            format!("# skill: {} ({})\n\n{}\n", sk.name, sk.source, sk.body),
+            false,
+        ),
+        None => (
+            format!(
+                "unknown skill '{}'. Available: {}",
+                name,
+                crate::skills::all()
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            true,
+        ),
+    }
+}
+
+async fn http_request(args: &Value) -> (String, bool) {
+    let url = s(args, "url");
+    if url.trim().is_empty() {
+        return ("http_request needs a url".to_string(), true);
+    }
+    let method = args["method"].as_str().unwrap_or("GET").to_ascii_uppercase();
+    let timeout = args["timeout_secs"].as_u64().unwrap_or(30).clamp(1, 300);
+    let follow = args["follow_redirects"].as_bool().unwrap_or(false);
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout))
+        .redirect(if follow {
+            reqwest::redirect::Policy::limited(10)
+        } else {
+            reqwest::redirect::Policy::none()
+        })
+        .user_agent(concat!("abyss/", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return (format!("client error: {e}"), true),
+    };
+
+    let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
+    let mut req = client.request(m, &url);
+    if let Some(h) = args["headers"].as_object() {
+        for (k, v) in h {
+            if let Some(vs) = v.as_str() {
+                req = req.header(k.as_str(), vs);
+            }
+        }
+    }
+    if let Some(b) = args["body"].as_str() {
+        req = req.body(b.to_string());
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let headers = resp
+                .headers()
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("<binary>")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let text = resp.text().await.unwrap_or_default();
+            let out = format!(
+                "HTTP {}\n{}\n\n{}",
+                status.as_u16(),
+                headers,
+                truncate_mid(&text, 20_000)
+            );
+            (out, !status.is_success())
+        }
+        Err(e) => (format!("request failed: {e}"), true),
+    }
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+fn url_decode(s: &str) -> Result<String, String> {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                if i + 2 >= bytes.len() {
+                    return Err("truncated % escape".to_string());
+                }
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).map_err(|e| e.to_string())?;
+                let v = u8::from_str_radix(hex, 16).map_err(|_| format!("bad hex '%{hex}'"))?;
+                out.push(v);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Ok(String::from_utf8_lossy(&out).to_string())
+}
+
+fn hex_decode(s: &str) -> Result<String, String> {
+    let clean: String = s
+        .trim()
+        .trim_start_matches("0x")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if clean.len() % 2 != 0 {
+        return Err("odd number of hex digits".to_string());
+    }
+    let b = clean.as_bytes();
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let pair = std::str::from_utf8(&b[i..i + 2]).map_err(|e| e.to_string())?;
+        out.push(u8::from_str_radix(pair, 16).map_err(|_| format!("bad hex '{pair}'"))?);
+        i += 2;
+    }
+    Ok(String::from_utf8_lossy(&out).to_string())
+}
+
+fn rot13(c: char) -> char {
+    match c {
+        'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+        'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+        _ => c,
+    }
+}
+
+fn jwt_decode(token: &str) -> Result<String, String> {
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
+    use base64::Engine as _;
+
+    let parts: Vec<&str> = token.trim().split('.').collect();
+    if parts.len() < 2 {
+        return Err("not a JWT (need header.payload[.sig])".to_string());
+    }
+    let dec = |p: &str| -> Result<String, String> {
+        URL_SAFE_NO_PAD
+            .decode(p)
+            .or_else(|_| URL_SAFE.decode(p))
+            .or_else(|_| STANDARD.decode(p))
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .map_err(|e| e.to_string())
+    };
+    let pretty = |j: &str| -> String {
+        serde_json::from_str::<Value>(j)
+            .ok()
+            .and_then(|v| serde_json::to_string_pretty(&v).ok())
+            .unwrap_or_else(|| j.to_string())
+    };
+    let header = dec(parts[0])?;
+    let payload = dec(parts[1])?;
+    Ok(format!(
+        "header:\n{}\n\npayload:\n{}\n\nsignature: {}",
+        pretty(&header),
+        pretty(&payload),
+        parts.get(2).copied().unwrap_or("(none)")
+    ))
+}
+
+fn codec(args: &Value) -> (String, bool) {
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+    use base64::Engine as _;
+
+    let op = s(args, "op").to_ascii_lowercase();
+    let input = s(args, "input");
+    let r: Result<String, String> = match op.as_str() {
+        "base64e" | "b64e" => Ok(STANDARD.encode(input.as_bytes())),
+        "base64d" | "b64d" => STANDARD
+            .decode(input.trim())
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .map_err(|e| e.to_string()),
+        "base64url_e" | "b64url_e" => Ok(URL_SAFE_NO_PAD.encode(input.as_bytes())),
+        "base64url_d" | "b64url_d" => URL_SAFE_NO_PAD
+            .decode(input.trim())
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .map_err(|e| e.to_string()),
+        "url_e" => Ok(url_encode(&input)),
+        "url_d" => url_decode(&input),
+        "hex_e" => Ok(input.bytes().map(|b| format!("{:02x}", b)).collect()),
+        "hex_d" => hex_decode(&input),
+        "jwt" => jwt_decode(&input),
+        "rot13" => Ok(input.chars().map(rot13).collect()),
+        _ => Err(format!(
+            "unknown op '{op}' — use base64e|base64d|base64url_e|base64url_d|url_e|url_d|hex_e|hex_d|jwt|rot13"
+        )),
+    };
+    match r {
+        Ok(v) => (v, false),
+        Err(e) => (format!("codec error: {e}"), true),
+    }
+}
+
+#[cfg(test)]
+mod codec_tests {
+    use super::*;
+
+    #[test]
+    fn base64_roundtrip() {
+        let enc = codec(&json!({"op": "base64e", "input": "hack the planet"}));
+        assert!(!enc.1);
+        let dec = codec(&json!({"op": "base64d", "input": enc.0}));
+        assert_eq!(dec.0, "hack the planet");
+    }
+
+    #[test]
+    fn url_and_hex_roundtrip() {
+        let e = codec(&json!({"op": "url_e", "input": "a b&c=d"}));
+        assert_eq!(e.0, "a%20b%26c%3Dd");
+        assert_eq!(codec(&json!({"op": "url_d", "input": e.0})).0, "a b&c=d");
+        let h = codec(&json!({"op": "hex_e", "input": "AB"}));
+        assert_eq!(h.0, "4142");
+        assert_eq!(codec(&json!({"op": "hex_d", "input": h.0})).0, "AB");
+    }
+
+    #[test]
+    fn jwt_decodes() {
+        // {"alg":"HS256","typ":"JWT"} . {"sub":"1337","admin":true}
+        let tok = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMzM3IiwiYWRtaW4iOnRydWV9.sig";
+        let out = codec(&json!({"op": "jwt", "input": tok}));
+        assert!(!out.1, "{}", out.0);
+        assert!(out.0.contains("\"admin\": true"));
+        assert!(out.0.contains("HS256"));
     }
 }
