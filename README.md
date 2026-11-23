@@ -22,10 +22,26 @@ ABYSS is a Claude-Code-style coding agent for the CLI, written in Rust. It runs 
 
 ## Install
 
-Requires Rust 1.80+ (only to build; the binary has no runtime deps).
+### Prebuilt
+
+Grab the latest from [Releases](https://github.com/vaibhavjnf/abyss/releases):
+
+| platform | asset |
+|---|---|
+| Linux x86_64 | `abyss-linux-x86_64` |
+| macOS arm64 | `abyss-macos-arm64` |
+| Windows x86_64 | `abyss-windows-x86_64.exe` |
 
 ```bash
-git clone <repo> abyss && cd abyss
+chmod +x abyss-linux-x86_64 && mv abyss-linux-x86_64 ~/.local/bin/abyss
+```
+
+### From source
+
+Requires Rust 1.80+ (build only; the binary has no runtime deps).
+
+```bash
+git clone https://github.com/vaibhavjnf/abyss && cd abyss
 cargo build --release
 install -m 755 target/release/abyss ~/.local/bin/abyss   # macOS/Linux
 ```
@@ -37,7 +53,7 @@ cargo build --release
 copy target\release\abyss.exe "$env:USERPROFILE\.local\bin\abyss.exe"
 ```
 
-Or straight from the tree: `cargo install --path .`
+Or: `cargo install --git https://github.com/vaibhavjnf/abyss`
 
 ## Quick start
 
