@@ -56,6 +56,22 @@ copy target\release\abyss.exe "$env:USERPROFILE\.local\bin\abyss.exe"
 
 Or: `cargo install --git https://github.com/vaibhavjnf/abyss`
 
+## Setup
+
+First interactive run walks you through it — provider, base URL, model, key, permission — tests the connection, then writes `~/.abyss/config.toml` (mode 0600). Re-run any time:
+
+```bash
+abyss --setup
+```
+
+- 10 presets: Hinoki, OpenAI, Anthropic, Gemini, OpenRouter, Groq, DeepSeek, xAI, Ollama, custom OpenAI-compatible.
+- Keys can live in the config (`api_key`) or be referenced from env (`api_key_env`); env wins.
+- An existing config is backed up to `config.toml.bak` before it is replaced.
+- `abyss --doctor` prints the resolved config and pings the endpoint.
+- Non-interactive runs (`abyss -p ...`, `--json`) never block on the wizard — they use config/env/defaults.
+
+Precedence: flags > env (`ABYSS_*`) > project `.abyss.toml` > `~/.abyss/config.toml` > built-in presets.
+
 ## Quick start
 
 ```bash
@@ -124,7 +140,8 @@ stream = true
 [providers.hinoki]
 kind = "openai"
 base_url = "http://127.0.0.1:8789/v1"
-api_key_env = "HINOKI_API_KEY"
+# api_key = "..."            # stored key (0600 file)
+api_key_env = "HINOKI_API_KEY"  # or read it from the environment
 model = "hinoki-offensive"
 ```
 
@@ -261,6 +278,7 @@ abyss [PROMPT...] [OPTIONS]
     --no-stream        plain JSON instead of SSE
     --skill <name>     preload a skill (repeatable)
     --list-skills      list built-in and on-disk skills
+    --setup            interactive setup wizard
     --no-color
 ```
 

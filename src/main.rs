@@ -4,6 +4,7 @@ mod config;
 mod llm;
 mod prompt;
 mod session;
+mod setup;
 mod skills;
 mod tools;
 mod ui;

@@ -106,6 +106,10 @@ pub struct Args {
     /// List the built-in and on-disk skills
     #[arg(long = "list-skills")]
     pub list_skills: bool,
+
+    /// Interactive setup wizard (writes ~/.abyss/config.toml)
+    #[arg(long)]
+    pub setup: bool,
 }
 
 pub async fn run() -> Result<i32> {
@@ -129,6 +133,20 @@ pub async fn run() -> Result<i32> {
             println!("  {:<16} {:<8} {}", s.name, s.source, s.description);
         }
         return Ok(0);
+    }
+
+    if args.setup {
+        crate::setup::run().await?;
+        return Ok(0);
+    }
+
+    let first_run = !config::config_path().exists();
+    let interactive = args.prompt.is_empty()
+        && !args.print
+        && !args.json
+        && std::io::stdin().is_terminal();
+    if first_run && interactive {
+        crate::setup::run().await?;
     }
 
     let cfg = config::resolve(&args)?;

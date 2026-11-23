@@ -34,6 +34,7 @@ impl Permission {
 pub struct ProviderCfg {
     pub kind: Option<String>,
     pub base_url: Option<String>,
+    pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub model: Option<String>,
     #[serde(default)]
@@ -45,6 +46,7 @@ pub struct Config {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub base_url: Option<String>,
+    pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
@@ -61,6 +63,7 @@ fn merge_provider(a: ProviderCfg, b: ProviderCfg) -> ProviderCfg {
     ProviderCfg {
         kind: b.kind.or(a.kind),
         base_url: b.base_url.or(a.base_url),
+        api_key: b.api_key.or(a.api_key),
         api_key_env: b.api_key_env.or(a.api_key_env),
         model: b.model.or(a.model),
         headers: {
@@ -81,6 +84,7 @@ fn merge(a: Config, b: Config) -> Config {
         provider: b.provider.or(a.provider),
         model: b.model.or(a.model),
         base_url: b.base_url.or(a.base_url),
+        api_key: b.api_key.or(a.api_key),
         api_key_env: b.api_key_env.or(a.api_key_env),
         max_tokens: b.max_tokens.or(a.max_tokens),
         temperature: b.temperature.or(a.temperature),
@@ -145,6 +149,7 @@ pub fn preset(name: &str) -> Option<ProviderCfg> {
     let p = |kind: &str, base: &str, env: &str, model: &str| ProviderCfg {
         kind: Some(kind.to_string()),
         base_url: Some(base.to_string()),
+        api_key: None,
         api_key_env: Some(env.to_string()),
         model: Some(model.to_string()),
         headers: BTreeMap::new(),
@@ -266,6 +271,7 @@ pub fn resolve(args: &Args) -> Result<Resolved> {
         .api_key
         .clone()
         .or_else(|| env_str("ABYSS_API_KEY"))
+        .or_else(|| pcfg.api_key.clone())
         .or_else(|| pcfg.api_key_env.as_deref().and_then(env_str))
         .or_else(|| cfg.api_key_env.as_deref().and_then(env_str))
         .or_else(|| default_key_env(kind).and_then(env_str))
